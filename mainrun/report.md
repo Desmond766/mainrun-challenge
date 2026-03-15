@@ -73,6 +73,10 @@ SGD is rarely used for training transformers. Its fixed learning rate across all
 
 **Effect:** More stable training dynamics, especially in the deeper layers. This is a smaller change than the optimizer switch but can help with consistent convergence.
 
+
+
+Shuffle training data per epoch: no improvements.
+Run 1 bumped the vocab to 32k while keeping batch_size=64: but failed due to memory not enough
 ---
 
 ## 3. Summary of Code Changes
@@ -126,3 +130,7 @@ My optimization approach was guided by a simple principle: *align the training s
 These changes are incremental and well-understood. I prioritized high-impact, low-risk modifications over experimental architecture changes. The result should be a validation loss below the 1.754 baseline, with training that is both faster and more stable.
 
 **To verify the results:** Run `task train` and record the final validation loss from `mainrun/logs/mainrun.log`. The last line containing `validation_step` will show the final loss.
+、
+
+
+TODO: Try increase the vocab size to 32k.

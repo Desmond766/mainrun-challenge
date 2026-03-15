@@ -1,0 +1,32 @@
+Metric minimization sweep
+Timestamp: 20260314-131252
+Log directory: logs/metric_min_20260314-131252
+
+These runs are cumulative and based on the current optimized code.
+The settings are intentionally CPU/16GB safe: batch_size 32 for all runs, no GPU assumptions, and only lightweight architecture changes.
+
+Run 1: tokenizer_vocab_24k
+Description: Suggestion 1: larger tokenizer vocab (16k -> 24k). Uses batch_size 32 for 16 GB CPU safety.
+Log file: logs/metric_min_20260314-131252/run1_tokenizer_vocab_24k.log
+Final validation loss: 1.3048463965175883
+
+Run 2: shorter_context_96x32
+Description: Suggestion 2: shorter context for title data (block_size 96, batch_size 32).
+Log file: logs/metric_min_20260314-131252/run2_shorter_context_96x32.log
+Final validation loss: 1.2899015587150755
+
+Run 3: random_offset_packing
+Description: Suggestion 3: random-offset packing for more context coverage.
+Log file: logs/metric_min_20260314-131252/run3_random_offset_packing.log
+Final validation loss: 1.2668079463433646
+
+Run 4: adamw_beta095_lr4e4
+Description: Suggestion 4: AdamW short-run tuning (lr 4e-4, beta2 0.95).
+Log file: logs/metric_min_20260314-131252/run4_adamw_beta095_lr4e4.log
+Final validation loss: 1.2860611201138148
+
+Run 5: dropout_001
+Description: Suggestion 5: lower dropout (0.01).
+Log file: logs/metric_min_20260314-131252/run5_dropout_001.log
+Final validation loss: 1.291334901098636
+

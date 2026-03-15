@@ -286,16 +286,6 @@ def main():
     train_ids = torch.tensor(tok.encode(train_text), dtype=torch.long)
     val_ids = torch.tensor(tok.encode(val_text), dtype=torch.long)
     
-    batches = len(train_ids) // (args.block_size * args.batch_size)
-    max_steps = args.epochs * batches
-    eval_interval = batches // args.evals_per_epoch
-    logger.log("dataset_info",
-               titles_count=len(train_titles),
-               epochs=args.epochs,
-               batches_per_epoch=batches,
-               tokens_per_epoch=len(train_ids),
-               vocab_size=tok.vocab_size)
-
     cfg = GPTConfig(
         vocab_size = tok.vocab_size,
         block_size = args.block_size,
@@ -325,6 +315,15 @@ def main():
         opt = torch.optim.AdamW(param_groups, lr=args.lr)
     else:
         opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    batches = len(train_ids) // (args.block_size * args.batch_size)
+    max_steps = args.epochs * batches
+    eval_interval = batches // args.evals_per_epoch
+    logger.log("dataset_info",
+               titles_count=len(train_titles),
+               epochs=args.epochs,
+               batches_per_epoch=batches,
+               tokens_per_epoch=len(train_ids),
+               vocab_size=tok.vocab_size)
     warmup_steps = int(max_steps * args.warmup_frac)
     def lr_lambda(step):
         if step < warmup_steps:

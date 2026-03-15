@@ -1,0 +1,6 @@
+{"event": "hyperparameters_configured", "timestamp": 1773492809.1402483, "block_size": 128, "batch_size": 64, "vocab_size": 32000, "n_layer": 6, "n_head": 8, "d_model": 512, "dropout": 0.05, "lr": 0.0003, "weight_decay": 0.01, "warmup_frac": 0.05, "evals_per_epoch": 3, "residual_scaling": true, "param_grouped_decay": false, "pack_strategy": "contiguous", "pack_stride": 64, "adam_beta1": 0.9, "adam_beta2": 0.999, "mlp_type": "gelu", "norm_type": "layernorm", "epochs": 7, "seed": 1337, "num_titles": 100000, "val_frac": 0.1, "log_file": "logs/metric_min_20260314-125322/run1_tokenizer_vocab_32k.log"}
+{"event": "device_info", "timestamp": 1773492809.1406646, "device": "cpu"}
+{"event": "model_info", "timestamp": 1773492822.61104, "parameters_count": 35364864}
+{"event": "dataset_info", "timestamp": 1773492823.1277041, "titles_count": 90000, "epochs": 7, "batches_per_epoch": [123, 123, 123, 123, 123, 123, 123], "tokens_per_epoch": 1014526, "vocab_size": 32000, "pack_strategy": "contiguous"}
+{"event": "training_step", "timestamp": 1773492832.594623, "step": 1, "max_steps": 861, "loss": 10.470081329345703, "elapsed_time": 9.466744661331177, "prnt": false}
+{"event": "validation_step", "timestamp": 1773492853.3258176, "step": 1, "max_steps": 861, "loss": 2.08977487726533, "elapsed_time": 9.466744661331177}
