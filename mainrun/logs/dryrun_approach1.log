@@ -1,0 +1,13 @@
+{"event": "hyperparameters_configured", "timestamp": 1773674459.262688, "block_size": 96, "batch_size": 64, "vocab_size": 32000, "n_layer": 6, "n_head": 8, "d_model": 512, "dropout": 0.05, "lr": 0.0003, "weight_decay": 0.01, "warmup_frac": 0.05, "evals_per_epoch": 3, "residual_scaling": true, "param_grouped_decay": true, "cosine_min_ratio": 0.1, "random_offset_packing": true, "label_smoothing": 0.0, "use_rope": false, "epochs": 7, "seed": 1337, "num_titles": 100000, "val_frac": 0.1, "log_file": "./logs/dryrun_approach1.log"}
+{"event": "device_info", "timestamp": 1773674459.26305, "device": "cpu"}
+{"event": "model_info", "timestamp": 1773674473.3604727, "parameters_count": 35348480}
+{"event": "dataset_info", "timestamp": 1773674473.867127, "titles_count": 90000, "epochs": 7, "batches_per_epoch": 165, "tokens_per_epoch": 1014526, "vocab_size": 32000}
+{"event": "training_step", "timestamp": 1773674479.6546745, "step": 1, "max_steps": 1155, "loss": 10.454834938049316, "elapsed_time": 5.787385702133179, "prnt": false}
+{"event": "validation_step", "timestamp": 1773674501.906341, "step": 1, "max_steps": 1155, "loss": 2.1704801293811378, "elapsed_time": 5.787385702133179}
+{"event": "training_step", "timestamp": 1773674508.0511487, "step": 2, "max_steps": 1155, "loss": 10.46310043334961, "elapsed_time": 34.18387007713318, "prnt": false}
+{"event": "training_step", "timestamp": 1773674514.1405804, "step": 3, "max_steps": 1155, "loss": 10.39922046661377, "elapsed_time": 40.27329087257385, "prnt": false}
+{"event": "training_step", "timestamp": 1773674520.355486, "step": 4, "max_steps": 1155, "loss": 10.271990776062012, "elapsed_time": 46.488196849823, "prnt": false}
+{"event": "training_step", "timestamp": 1773674526.5790384, "step": 5, "max_steps": 1155, "loss": 10.1024808883667, "elapsed_time": 52.711753129959106, "prnt": false}
+{"event": "training_step", "timestamp": 1773674532.3934205, "step": 6, "max_steps": 1155, "loss": 9.95525074005127, "elapsed_time": 58.52613878250122, "prnt": false}
+{"event": "training_step", "timestamp": 1773674538.4418247, "step": 7, "max_steps": 1155, "loss": 9.781357765197754, "elapsed_time": 64.57454013824463, "prnt": false}
+{"event": "training_step", "timestamp": 1773674544.8085122, "step": 8, "max_steps": 1155, "loss": 9.688326835632324, "elapsed_time": 70.94123721122742, "prnt": false}

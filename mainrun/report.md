@@ -134,3 +134,4 @@ These changes are incremental and well-understood. I prioritized high-impact, lo
 
 
 TODO: Try increase the vocab size to 32k.
+{"event": "validation_step", "timestamp": 1773604504.8858755, "step": 861, "max_steps": 861, "loss": 1.2658827893861813, "elapsed_time": 17477.81685590744}
