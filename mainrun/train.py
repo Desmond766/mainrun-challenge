@@ -18,13 +18,13 @@ class Hyperparameters:
     block_size: int = 128
     batch_size: int = 64
     vocab_size: int = 16_000
-    n_layer: int = 6
-    n_head: int = 8
-    d_model: int = 512
+    n_layer: int = 9
+    n_head: int = 12
+    d_model: int = 768
     dropout: float = 0.05
-    lr: float = 3e-4
+    lr: float = 2e-4
     weight_decay: float = 0.01
-    warmup_frac: float = 0.05
+    warmup_frac: float = 0.15
     evals_per_epoch: int = 3
     residual_scaling: bool = True
     param_grouped_decay: bool = False
@@ -42,6 +42,7 @@ RUN_CONFIGS = {
     3: {"lr": 3e-4, "weight_decay": 0.01, "warmup_frac": 0.05, "dropout": 0.1, "residual_scaling": True, "param_grouped_decay": False},
     4: {"lr": 3e-4, "weight_decay": 0.01, "warmup_frac": 0.05, "dropout": 0.05, "residual_scaling": True, "param_grouped_decay": False},
     5: {"lr": 3e-4, "weight_decay": 0.01, "warmup_frac": 0.05, "dropout": 0.05, "residual_scaling": True, "param_grouped_decay": True},
+    6: {"n_layer": 9, "n_head": 12, "d_model": 768, "lr": 2e-4, "weight_decay": 0.01, "warmup_frac": 0.15, "dropout": 0.05, "residual_scaling": True, "param_grouped_decay": True},
 }
 
 def configure_logging(log_file: str):
@@ -227,16 +228,21 @@ class GPT(nn.Module):
     @staticmethod
     def _init_weights(module):
         if isinstance(module, nn.Linear):
-            # Xavier/Glorot初始化 - 适合激活函数在[-1, 1]范围内的情况
-            nn.init.xavier_normal_(module.weight)
+            # He/Kaiming初始化 - 更适合GELU激活函数
+            # 对于MLP的扩展层，使用fan_in模式；其他层使用fan_out模式
+            if hasattr(module, 'out_features') and module.out_features > module.in_features:
+                # MLP扩展层：fan_in模式
+                nn.init.kaiming_normal_(module.weight, mode='fan_in', nonlinearity='relu')
+            else:
+                # 其他层：fan_out模式，配合GELU的近似ReLU性质
+                nn.init.kaiming_normal_(module.weight, mode='fan_out', nonlinearity='relu')
             if module.bias is not None:
-                # 偏置初始化为零，加入小的随机性提高训练稳定性
                 nn.init.constant_(module.bias, 0.0)
-                
+
         elif isinstance(module, nn.Embedding):
-            # 嵌入层使用较小标准差的正态初始化
-            nn.init.normal_(module.weight, mean=0.0, std=0.01)
-            
+            # 嵌入层使用略大一点的标准差，适应更大的模型
+            nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
         elif isinstance(module, nn.LayerNorm):
             # 层归一化参数的特殊初始化
             nn.init.constant_(module.bias, 0.0)
@@ -258,8 +264,8 @@ class GPT(nn.Module):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run", type=int, choices=[1, 2, 3, 4, 5], default=None,
-                        help="Run config 1-5 for ablation. Overrides hyperparameters.")
+    parser.add_argument("--run", type=int, choices=[1, 2, 3, 4, 5, 6], default=None,
+                        help="Run config 1-6 for ablation. Overrides hyperparameters.")
     parser.add_argument("--log-file", type=str, default=None, help="Log file path")
     cli = parser.parse_args()
 
