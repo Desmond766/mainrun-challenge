@@ -17,12 +17,6 @@ tasks:
     cmds:
       - python3 train.py
 
-  overnight:
-    deps: [checkpoint, download]
-    dir: mainrun
-    cmds:
-      - ./run_overnight.sh
-
   submit:
     deps: [checkpoint]
     dir: scripts

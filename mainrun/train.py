@@ -28,10 +28,6 @@ class Hyperparameters:
     evals_per_epoch: int = 3
     residual_scaling: bool = True
     param_grouped_decay: bool = False
-    cosine_min_ratio: float = 0.5
-    random_offset_packing: bool = False
-    label_smoothing: float = 0.0
-    use_rope: bool = False
 
     epochs: int = 7
     seed: int = 1337
@@ -46,36 +42,6 @@ RUN_CONFIGS = {
     3: {"lr": 3e-4, "weight_decay": 0.01, "warmup_frac": 0.05, "dropout": 0.1, "residual_scaling": True, "param_grouped_decay": False},
     4: {"lr": 3e-4, "weight_decay": 0.01, "warmup_frac": 0.05, "dropout": 0.05, "residual_scaling": True, "param_grouped_decay": False},
     5: {"lr": 3e-4, "weight_decay": 0.01, "warmup_frac": 0.05, "dropout": 0.05, "residual_scaling": True, "param_grouped_decay": True},
-}
-
-# Approach configs for overnight comparison (each is independent, no cumulative)
-APPROACH_CONFIGS = {
-    1: {
-        "block_size": 96,
-        "batch_size": 64,
-        "param_grouped_decay": True,
-        "cosine_min_ratio": 0.1,
-        "random_offset_packing": True,
-        "lr": 3e-4,
-    },
-    2: {
-        "block_size": 64,
-        "batch_size": 32,
-        "param_grouped_decay": True,
-        "cosine_min_ratio": 0.5,
-        "random_offset_packing": False,
-        "lr": 3e-4,
-    },
-    3: {
-        "block_size": 64,
-        "batch_size": 32,
-        "param_grouped_decay": True,
-        "cosine_min_ratio": 0.5,
-        "random_offset_packing": False,
-        "lr": 4e-4,
-        "label_smoothing": 0.1,
-        "use_rope": True,
-    },
 }
 
 def configure_logging(log_file: str):
@@ -139,14 +105,10 @@ def get_batch(split_ids: torch.Tensor, ptr: int, block_size: int, batch_size: in
     y = batch[1:].view(batch_size, block_size).to(device)
     return x, y, ptr + block_size * batch_size
 
-def get_batch_by_index(split_ids: torch.Tensor, batch_idx: int, block_size: int, batch_size: int, device: torch.device, random_offset: int = 0):
-    """Get a batch by index. Used with shuffled indices for per-epoch data shuffling.
-    random_offset: when > 0, adds offset to ptr for random context windows (approach 1)."""
+def get_batch_by_index(split_ids: torch.Tensor, batch_idx: int, block_size: int, batch_size: int, device: torch.device):
+    """Get a batch by index. Used with shuffled indices for per-epoch data shuffling."""
     span = block_size * batch_size + 1
-    max_start = len(split_ids) - span
-    if max_start < 0:
-        raise ValueError("split_ids too short for batch")
-    ptr = min(batch_idx * span + random_offset, max_start)
+    ptr = batch_idx * span
     batch = split_ids[ptr: ptr + span]
     x = batch[:-1].view(batch_size, block_size).to(device)
     y = batch[1:].view(batch_size, block_size).to(device)
@@ -195,26 +157,6 @@ class GPTConfig:
     d_model: int
     dropout: float
     residual_scaling: bool = True
-    use_rope: bool = False
-
-def rotate_half(x: torch.Tensor) -> torch.Tensor:
-    """Rotate half the hidden dims. x: (..., d)."""
-    x1, x2 = x[..., : x.size(-1) // 2], x[..., x.size(-1) // 2 :]
-    return torch.cat((-x2, x1), dim=-1)
-
-def apply_rope(q: torch.Tensor, k: torch.Tensor, head_dim: int) -> tuple:
-    """Apply rotary position embedding to q and k. q,k: (B, n_head, T, head_dim)."""
-    B, n_head, T, d = q.size()
-    device = q.device
-    inv_freq = 1.0 / (10000 ** (torch.arange(0, d, 2, device=device).float() / d))
-    t = torch.arange(T, device=device).float()
-    freqs = torch.outer(t, inv_freq)
-    emb = torch.cat((freqs, freqs), dim=-1)
-    cos = emb.cos().unsqueeze(0).unsqueeze(0)
-    sin = emb.sin().unsqueeze(0).unsqueeze(0)
-    q_embed = (q * cos) + (rotate_half(q) * sin)
-    k_embed = (k * cos) + (rotate_half(k) * sin)
-    return q_embed, k_embed
 
 class CausalSelfAttention(nn.Module):
     def __init__(self, cfg: GPTConfig):
@@ -222,7 +164,6 @@ class CausalSelfAttention(nn.Module):
         assert cfg.d_model % cfg.n_head == 0
         self.head_dim = cfg.d_model // cfg.n_head
         self.n_head   = cfg.n_head
-        self.use_rope = getattr(cfg, 'use_rope', False)
         self.qkv = nn.Linear(cfg.d_model, 3 * cfg.d_model)
         self.proj = nn.Linear(cfg.d_model, cfg.d_model)
         self.attn_drop = nn.Dropout(cfg.dropout)
@@ -233,8 +174,6 @@ class CausalSelfAttention(nn.Module):
         B, T, C = x.size()
         qkv = self.qkv(x).view(B, T, 3, self.n_head, self.head_dim).transpose(1, 3)
         q, k, v = qkv[..., 0, :, :], qkv[..., 1, :, :], qkv[..., 2, :, :]
-        if self.use_rope:
-            q, k = apply_rope(q, k, self.head_dim)
         att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
         att = att.masked_fill(self.tril[:T, :T] == 0, float("-inf"))
         att = F.softmax(att, dim=-1)
@@ -295,11 +234,8 @@ class GPT(nn.Module):
     def forward(self, idx: torch.Tensor, targets: torch.Tensor | None = None):
         B, T = idx.size()
         tok = self.token_emb(idx)
-        if getattr(self.cfg, 'use_rope', False):
-            x = self.drop(tok)
-        else:
-            pos = self.pos_emb[:, :T, :]
-            x = self.drop(tok + pos)
+        pos = self.pos_emb[:, :T, :]
+        x = self.drop(tok + pos)
         for block in self.blocks: x = block(x)
         x = self.ln_f(x)
         logits = self.head(x)
@@ -314,20 +250,10 @@ def main():
     parser.add_argument("--run", type=int, choices=[1, 2, 3, 4, 5], default=None,
                         help="Run config 1-5 for ablation. Overrides hyperparameters.")
     parser.add_argument("--log-file", type=str, default=None, help="Log file path")
-    parser.add_argument("--approach", type=int, choices=[1, 2, 3], default=None,
-                        help="Approach 1/2/3 for overnight runs. Overrides hyperparameters.")
     cli = parser.parse_args()
 
     args = Hyperparameters()
-    if cli.approach is not None:
-        config = APPROACH_CONFIGS[cli.approach]
-        for k, v in config.items():
-            setattr(args, k, v)
-        if cli.log_file:
-            args.log_file = cli.log_file
-        else:
-            args.log_file = f"./logs/approach{cli.approach}.log"
-    elif cli.run is not None:
+    if cli.run is not None:
         config = RUN_CONFIGS[cli.run]
         for k, v in config.items():
             if hasattr(args, k):
@@ -368,7 +294,6 @@ def main():
         d_model    = args.d_model,
         dropout    = args.dropout,
         residual_scaling = getattr(args, "residual_scaling", True),
-        use_rope   = getattr(args, "use_rope", False),
     )
     model = GPT(cfg).to(device)
     model_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -404,8 +329,7 @@ def main():
         if step < warmup_steps:
             return step / warmup_steps if warmup_steps > 0 else 1.0
         progress = (step - warmup_steps) / max(1, max_steps - warmup_steps)
-        min_ratio = getattr(args, "cosine_min_ratio", 0.5)
-        return min_ratio + (1.0 - min_ratio) * 0.5 * (1 + math.cos(math.pi * progress))
+        return 0.5 * (1 + math.cos(math.pi * progress))
     scheduler = torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda)
 
     def evaluate():
@@ -422,18 +346,13 @@ def main():
 
     step = 0
     t0 = time.time()
-    span = args.block_size * args.batch_size + 1
     for epoch in range(1, args.epochs + 1):
         batch_indices = list(range(batches))
         random.shuffle(batch_indices)
         for batch_idx in tqdm(batch_indices, desc=f"Epoch {epoch}/{args.epochs}"):
             step += 1
-            use_random_offset = getattr(args, "random_offset_packing", False)
-            offset = random.randint(0, span - 1) if use_random_offset else 0
-            xb, yb = get_batch_by_index(train_ids, batch_idx, args.block_size, args.batch_size, device, random_offset=offset)
-            logits, loss = model(xb, yb)
-            if getattr(args, "label_smoothing", 0) > 0:
-                loss = F.cross_entropy(logits.view(-1, logits.size(-1)), yb.view(-1), reduction='mean', label_smoothing=args.label_smoothing)
+            xb, yb = get_batch_by_index(train_ids, batch_idx, args.block_size, args.batch_size, device)
+            _, loss = model(xb, yb)
             opt.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
