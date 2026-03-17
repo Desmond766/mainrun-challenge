@@ -1,0 +1,6 @@
+{"event": "hyperparameters_configured", "timestamp": 1773493794.6131418, "block_size": 96, "batch_size": 32, "vocab_size": 24000, "n_layer": 6, "n_head": 8, "d_model": 512, "dropout": 0.01, "lr": 0.0004, "weight_decay": 0.01, "warmup_frac": 0.05, "evals_per_epoch": 3, "residual_scaling": true, "param_grouped_decay": false, "pack_strategy": "random_offset", "pack_stride": 64, "adam_beta1": 0.9, "adam_beta2": 0.95, "mlp_type": "gelu", "norm_type": "layernorm", "epochs": 7, "seed": 1337, "num_titles": 100000, "val_frac": 0.1, "log_file": "logs/preflight/run5.log"}
+{"event": "device_info", "timestamp": 1773493794.613505, "device": "cpu"}
+{"event": "model_info", "timestamp": 1773493807.590758, "parameters_count": 31252480}
+{"event": "dataset_info", "timestamp": 1773493807.9681275, "titles_count": 90000, "epochs": 7, "batches_per_epoch": [340, 340, 340, 340, 340, 340, 340], "tokens_per_epoch": 1046384, "vocab_size": 24000, "pack_strategy": "random_offset"}
+{"event": "training_step", "timestamp": 1773493810.3625784, "step": 1, "max_steps": 1, "loss": 10.166095733642578, "elapsed_time": 2.3942477703094482, "prnt": false}
+{"event": "validation_step", "timestamp": 1773493831.9869273, "step": 1, "max_steps": 1, "loss": 2.021264497110099, "elapsed_time": 2.3942477703094482}

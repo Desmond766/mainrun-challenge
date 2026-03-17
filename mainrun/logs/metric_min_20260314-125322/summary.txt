@@ -1,0 +1,7 @@
+Metric minimization sweep
+Timestamp: 20260314-125322
+Log directory: logs/metric_min_20260314-125322
+
+These runs are cumulative and based on the current optimized code.
+The settings are intentionally CPU/16GB safe: no GPU assumptions, no larger batch sizes, and only lightweight architecture changes.
+

@@ -1,5 +1,6 @@
 import utils
 import math, random, time
+import argparse
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -20,16 +21,28 @@ class Hyperparameters:
     n_layer: int = 6
     n_head: int = 8
     d_model: int = 512
-    dropout: float = 0.1
-    lr: float = 6e-3
-    weight_decay: float = 0.0
+    dropout: float = 0.05
+    lr: float = 3e-4
+    weight_decay: float = 0.01
+    warmup_frac: float = 0.05
     evals_per_epoch: int = 3
-    
+    residual_scaling: bool = True
+    param_grouped_decay: bool = False
+
     epochs: int = 7
     seed: int = 1337
     num_titles: int = 100_000
     val_frac: float = 0.10
     log_file: str = "./logs/mainrun.log"
+
+# Run configurations for ablation experiments
+RUN_CONFIGS = {
+    1: {"lr": 3e-4, "weight_decay": 0.01, "warmup_frac": 0.0, "dropout": 0.1, "residual_scaling": False, "param_grouped_decay": False},
+    2: {"lr": 3e-4, "weight_decay": 0.01, "warmup_frac": 0.05, "dropout": 0.1, "residual_scaling": False, "param_grouped_decay": False},
+    3: {"lr": 3e-4, "weight_decay": 0.01, "warmup_frac": 0.05, "dropout": 0.1, "residual_scaling": True, "param_grouped_decay": False},
+    4: {"lr": 3e-4, "weight_decay": 0.01, "warmup_frac": 0.05, "dropout": 0.05, "residual_scaling": True, "param_grouped_decay": False},
+    5: {"lr": 3e-4, "weight_decay": 0.01, "warmup_frac": 0.05, "dropout": 0.05, "residual_scaling": True, "param_grouped_decay": True},
+}
 
 def configure_logging(log_file: str):
     Path(log_file).parent.mkdir(parents=True, exist_ok=True)
@@ -92,6 +105,15 @@ def get_batch(split_ids: torch.Tensor, ptr: int, block_size: int, batch_size: in
     y = batch[1:].view(batch_size, block_size).to(device)
     return x, y, ptr + block_size * batch_size
 
+def get_batch_by_index(split_ids: torch.Tensor, batch_idx: int, block_size: int, batch_size: int, device: torch.device):
+    """Get a batch by index. Used with shuffled indices for per-epoch data shuffling."""
+    span = block_size * batch_size + 1
+    ptr = batch_idx * span
+    batch = split_ids[ptr: ptr + span]
+    x = batch[:-1].view(batch_size, block_size).to(device)
+    y = batch[1:].view(batch_size, block_size).to(device)
+    return x, y
+
 def iter_full_split(split_ids: torch.Tensor, block_size: int, batch_size: int, device: torch.device):
     span = block_size * batch_size + 1
     for ptr in range(0, len(split_ids) - span + 1, span):
@@ -134,6 +156,7 @@ class GPTConfig:
     n_head: int
     d_model: int
     dropout: float
+    residual_scaling: bool = True
 
 class CausalSelfAttention(nn.Module):
     def __init__(self, cfg: GPTConfig):
@@ -195,6 +218,11 @@ class GPT(nn.Module):
 
         self.apply(self._init_weights)
         self.head.weight = self.token_emb.weight
+        if cfg.residual_scaling:
+            scale = 1.0 / math.sqrt(2 * cfg.n_layer)
+            for block in self.blocks:
+                nn.init.normal_(block.attn.proj.weight, mean=0.0, std=0.02 * scale)
+                nn.init.normal_(block.mlp.net[2].weight, mean=0.0, std=0.02 * scale)
 
     @staticmethod
     def _init_weights(module):
@@ -229,7 +257,25 @@ class GPT(nn.Module):
         return logits, loss
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--run", type=int, choices=[1, 2, 3, 4, 5], default=None,
+                        help="Run config 1-5 for ablation. Overrides hyperparameters.")
+    parser.add_argument("--log-file", type=str, default=None, help="Log file path")
+    cli = parser.parse_args()
+
     args = Hyperparameters()
+    if cli.run is not None:
+        config = RUN_CONFIGS[cli.run]
+        for k, v in config.items():
+            if hasattr(args, k):
+                setattr(args, k, v)
+        if cli.log_file:
+            args.log_file = cli.log_file
+        else:
+            args.log_file = f"./logs/run{cli.run}.log"
+    if cli.log_file and cli.run is None:
+        args.log_file = cli.log_file
+
     torch.manual_seed(args.seed)
     random.seed(args.seed)
     
@@ -251,6 +297,35 @@ def main():
     train_ids = torch.tensor(tok.encode(train_text), dtype=torch.long)
     val_ids = torch.tensor(tok.encode(val_text), dtype=torch.long)
     
+    cfg = GPTConfig(
+        vocab_size = tok.vocab_size,
+        block_size = args.block_size,
+        n_layer    = args.n_layer,
+        n_head     = args.n_head,
+        d_model    = args.d_model,
+        dropout    = args.dropout,
+        residual_scaling = getattr(args, "residual_scaling", True),
+    )
+    model = GPT(cfg).to(device)
+    model_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    logger.log("model_info", parameters_count=model_params)
+
+    if getattr(args, "param_grouped_decay", False):
+        decay_params, no_decay_params = [], []
+        for n, p in model.named_parameters():
+            if not p.requires_grad:
+                continue
+            if "bias" in n or "ln" in n or "LayerNorm" in n or "pos_emb" in n:
+                no_decay_params.append(p)
+            else:
+                decay_params.append(p)
+        param_groups = [
+            {"params": decay_params, "weight_decay": args.weight_decay},
+            {"params": no_decay_params, "weight_decay": 0.0},
+        ]
+        opt = torch.optim.AdamW(param_groups, lr=args.lr)
+    else:
+        opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     batches = len(train_ids) // (args.block_size * args.batch_size)
     max_steps = args.epochs * batches
     eval_interval = batches // args.evals_per_epoch
@@ -260,21 +335,13 @@ def main():
                batches_per_epoch=batches,
                tokens_per_epoch=len(train_ids),
                vocab_size=tok.vocab_size)
-
-    cfg = GPTConfig(
-        vocab_size = tok.vocab_size,
-        block_size = args.block_size,
-        n_layer    = args.n_layer,
-        n_head     = args.n_head,
-        d_model    = args.d_model,
-        dropout    = args.dropout,
-    )
-    model = GPT(cfg).to(device)
-    model_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    logger.log("model_info", parameters_count=model_params)
-    
-    opt = torch.optim.SGD(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max_steps)
+    warmup_steps = int(max_steps * args.warmup_frac)
+    def lr_lambda(step):
+        if step < warmup_steps:
+            return step / warmup_steps if warmup_steps > 0 else 1.0
+        progress = (step - warmup_steps) / max(1, max_steps - warmup_steps)
+        return 0.5 * (1 + math.cos(math.pi * progress))
+    scheduler = torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda)
 
     def evaluate():
         model.eval()
@@ -288,13 +355,14 @@ def main():
         model.train()
         return losses / len(val_text)
 
-    ptr = 0
     step = 0
     t0 = time.time()
     for epoch in range(1, args.epochs + 1):
-        for _ in tqdm(range(1, batches + 1), desc=f"Epoch {epoch}/{args.epochs}"):
+        batch_indices = list(range(batches))
+        random.shuffle(batch_indices)
+        for batch_idx in tqdm(batch_indices, desc=f"Epoch {epoch}/{args.epochs}"):
             step += 1
-            xb, yb, ptr = get_batch(train_ids, ptr, args.block_size, args.batch_size, device)
+            xb, yb = get_batch_by_index(train_ids, batch_idx, args.block_size, args.batch_size, device)
             _, loss = model(xb, yb)
             opt.zero_grad(set_to_none=True)
             loss.backward()
