@@ -198,10 +198,21 @@ class GPT(nn.Module):
 
     @staticmethod
     def _init_weights(module):
-        if isinstance(module, (nn.Linear, nn.Embedding)):
-            nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            if isinstance(module, nn.Linear) and module.bias is not None:
-                nn.init.zeros_(module.bias)
+        if isinstance(module, nn.Linear):
+            # Xavier/Glorot初始化 - 适合激活函数在[-1, 1]范围内的情况
+            nn.init.xavier_normal_(module.weight)
+            if module.bias is not None:
+                # 偏置初始化为零，加入小的随机性提高训练稳定性
+                nn.init.constant_(module.bias, 0.0)
+                
+        elif isinstance(module, nn.Embedding):
+            # 嵌入层使用较小标准差的正态初始化
+            nn.init.normal_(module.weight, mean=0.0, std=0.01)
+            
+        elif isinstance(module, nn.LayerNorm):
+            # 层归一化参数的特殊初始化
+            nn.init.constant_(module.bias, 0.0)
+            nn.init.constant_(module.weight, 1.0)
 
     def forward(self, idx: torch.Tensor, targets: torch.Tensor | None = None):
         B, T = idx.size()
