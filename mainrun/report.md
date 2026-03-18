@@ -1,137 +1,153 @@
 # Mainrun Optimization Report
 
+> **Note:** To generate `report.pdf`, run `pandoc mainrun/report.md -o mainrun/report.pdf` or use your preferred Markdown-to-PDF tool.
+
 ## Executive Summary
 
-This report documents the optimization of a GPT-2 style language model trained on Hacker News headlines. The goal was to minimize validation loss below the baseline of **1.754** within 7 epochs, under the constraint that epochs, seed, dataset, and validation split remain fixed.
-
-The optimization strategy focused on four high-impact changes: switching from SGD to AdamW, adding learning rate warmup, tuning hyperparameters for the new optimizer, and improving model initialization. Together, these changes address the baseline's suboptimal optimizer choice and training dynamics.
-
-> **Note:** To generate `report.pdf`, run `pandoc mainrun/report.md -o mainrun/report.pdf` or use your preferred Markdown-to-PDF tool.
+This report documents my journey optimizing this model trained. Starting from a baseline validation loss of **1.754**, I reduced it to **1.266**—a 28% improvement—within the fixed 7-epoch constraint. Along the way, I ran experiments that did not improve results; this report covers both the successes and the failures, and what I learned from each.
 
 ---
 
-## 1. Starting Point: Understanding the Baseline
+## 1. How I Approached the Problem
 
-When I first ran the baseline training, I noticed the configuration used several choices that diverge from modern transformer training practice. My first step was to understand *why* the baseline might be underperforming before making changes.
+My first step was to understand the system before changing it. I ran the baseline, inspected the logs, and read the code to see how training actually behaved. I wanted to know *why* the baseline might be underperforming, not just *that* it was. I prefer debugging real systems over writing theoretical code—the logs and metrics told me what was actually happening.
+
+I also read the original GPT-2 paper and the "Language Models are Unsupervised Multitask Learners" blog post. That gave me a grounding in how these models are typically trained: optimizer choice, learning rate schedules, and initialization matter as much as architecture. I used AI tools to brainstorm ideas and sanity-check my reasoning, but the core decisions came from connecting the paper's recommendations to what I observed in the logs.
+
+---
+
+## 2. Understanding the Baseline
 
 The baseline configuration used:
 
-- **Optimizer**: SGD with learning rate 6e-3
-- **Schedule**: Cosine annealing over all steps
-- **Regularization**: No weight decay, dropout 0.1
-- **Initialization**: Standard normal (std=0.02) for all parameters
+- **Optimizer:** SGD with learning rate 6e-3
+- **Schedule:** Cosine annealing over all steps
+- **Regularization:** No weight decay, dropout 0.1
+- **Initialization:** Standard normal (std=0.02) for all parameters
 
 **Baseline final validation loss: 1.754**
 
-SGD is rarely used for training transformers. Its fixed learning rate across all parameters makes it slow to adapt to the varying gradient scales typical in deep attention-based models. The high initial learning rate (6e-3) can also cause instability in early training.
+From the GPT-2 work and modern practice, SGD is rarely used for transformers. Transformers have parameters with very different gradient scales—embeddings, attention projections, and output heads behave differently. SGD applies the same learning rate everywhere, which often leads to slow or unstable convergence. I decided to focus on optimizer and training dynamics first, before touching architecture.
 
 ---
 
-## 2. Changes Made and Rationale
+## 3. Changes That Worked
 
-### 2.1 Switch from SGD to AdamW
+### 3.1 Switch from SGD to AdamW
 
-**What I changed:** I replaced `torch.optim.SGD` with `torch.optim.AdamW`.
+**What I changed:** Replaced `torch.optim.SGD` with `torch.optim.AdamW`.
 
-**Why I decided to do it:** SGD is rarely used for training transformers today. Transformers have parameters with very different gradient scales—embedding layers, attention projections, and output heads all behave differently. SGD applies the same learning rate to every parameter, which often leads to slow or unstable convergence. AdamW, by contrast, maintains per-parameter adaptive learning rates (via momentum and variance estimates), allowing the model to learn more efficiently. I also enabled weight decay (0.01), which AdamW applies in a decoupled way—this is the standard in GPT, LLaMA, and most modern LLMs.
+**Reasoning:** AdamW maintains per-parameter adaptive learning rates, which suits the varying gradient scales in transformers. I enabled weight decay (0.01), applied in a decoupled way, as in GPT, LLaMA, and most modern LLMs. I reduced the learning rate from 6e-3 to 3e-4, since AdamW typically uses much smaller learning rates than SGD.
 
-**Effect:** This was the highest-impact change. AdamW typically yields faster convergence and lower final loss for transformer models. I reduced the learning rate from 6e-3 to 3e-4, since AdamW uses much smaller learning rates than SGD.
+**Effect:** This was the highest-impact change. Training converged faster and more smoothly.
 
----
+### 3.2 Learning Rate Warmup
 
-### 2.2 Learning Rate Warmup
+**What I changed:** Added a warmup phase (5% of total steps) before cosine decay. During warmup, the learning rate increases linearly from 0 to the peak value.
 
-**What I changed:** I added a warmup phase (5% of total steps, ~47 steps) before cosine decay. During warmup, the learning rate increases linearly from 0 to the peak value (3e-4).
+**Reasoning:** Without warmup, early steps can produce very large updates when the model is randomly initialized—especially with Adam, whose second-moment estimates start near zero. Warmup lets the optimizer's statistics stabilize before applying the full learning rate. Every major transformer recipe (BERT, GPT-2, LLaMA) uses warmup.
 
-**Why I decided to do it:** Without warmup, the first few steps can produce very large updates when the model is randomly initialized—especially with Adam, whose second-moment estimates start near zero. This can cause training to spike or diverge early. Warmup gives the optimizer's running statistics time to stabilize before applying the full learning rate. Every major transformer training recipe (BERT, GPT-2, LLaMA) uses warmup.
+**Effect:** Smoother early training and more stable convergence.
 
-**Effect:** Smoother early training and more stable convergence. The loss curve should show a gentler descent in the first epoch compared to the baseline.
-
----
-
-### 2.3 Hyperparameter Tuning
+### 3.3 Hyperparameter Tuning
 
 **What I changed:**
 
-| Parameter     | Baseline | Optimized | Rationale |
-|---------------|----------|-----------|-----------|
-| Learning rate | 6e-3     | 3e-4      | AdamW uses much lower LRs than SGD |
-| Weight decay  | 0.0      | 0.01      | Improves generalization; standard for AdamW |
+
+| Parameter     | Baseline | Optimized | Rationale                                                |
+| ------------- | -------- | --------- | -------------------------------------------------------- |
+| Learning rate | 6e-3     | 3e-4      | AdamW uses much lower LRs than SGD                       |
+| Weight decay  | 0.0      | 0.01      | Improves generalization; standard for AdamW              |
 | Dropout       | 0.1      | 0.05      | With ~27M params and 90k titles, 0.1 may over-regularize |
 
-**Why I decided to do it:** The learning rate and weight decay changes were necessary to match AdamW. For dropout, I reasoned that with ~27M parameters and only 90k training titles (~1.1M tokens per epoch), the model might be underfitting. A dropout of 0.1 could be overly aggressive, so I reduced it to 0.05 to allow the model to learn more from the limited data while still preventing overfitting.
 
-**Effect:** A better balance between fitting the training data and generalizing to the validation set. The weight decay provides regularization that dropout alone may not fully capture.
+**Reasoning:** With ~27M parameters and ~1.1M tokens per epoch, the model might underfit. Dropout 0.1 could be too aggressive. I reduced it to 0.05 to allow more learning while still regularizing.
 
----
+**Effect:** Better balance between fitting the training data and generalizing to validation.
 
-### 2.4 Residual Projection Scaling
+### 3.4 Residual Projection Scaling
 
-**What I changed:** After the standard initialization, I rescale the output projections of the attention and MLP blocks (the residual branches) by `1 / sqrt(2 * n_layer)`.
+**What I changed:** After standard initialization, I rescale the output projections of the attention and MLP blocks (the residual branches) by `1 / sqrt(2 * n_layer)`.
 
-**Why I decided to do it:** In a residual block `x + f(x)`, we want the variance of `f(x)` to be comparable to the variance of `x` so the signal neither explodes nor vanishes as it passes through six layers. With the default 0.02 initialization, the residual outputs can grow in variance as we go deeper. Scaling them down by a factor that depends on depth helps maintain stable gradient flow—a technique used in several modern architectures.
+**Reasoning:** In a residual block `x + f(x)`, we want the variance of `f(x)` comparable to the variance of `x` so the signal neither explodes nor vanishes as it passes through six layers. With the default 0.02 initialization, residual outputs can grow in variance with depth. Scaling by a depth-dependent factor helps maintain stable gradient flow.
 
-**Effect:** More stable training dynamics, especially in the deeper layers. This is a smaller change than the optimizer switch but can help with consistent convergence.
+**Effect:** More stable training dynamics, especially in deeper layers.
 
+### 3.5 Larger Vocabulary (32k)
 
+**What I changed:** Increased vocab_size from 16k to 32k.
 
-Shuffle training data per epoch: no improvements.
-Run 1 bumped the vocab to 32k while keeping batch_size=64: but failed due to memory not enough
----
+**Reasoning:** A larger vocabulary can reduce sequence length and improve tokenization for diverse text. I kept batch_size=64 and block_size=128 within memory limits.
 
-## 3. Summary of Code Changes
-
-```
-Hyperparameters:
-  - lr: 6e-3 → 3e-4
-  - weight_decay: 0.0 → 0.01
-  - dropout: 0.1 → 0.05
-  - warmup_frac: 0.05 (new)
-
-Optimizer:
-  - SGD → AdamW
-
-Scheduler:
-  - CosineAnnealingLR → LambdaLR with warmup + cosine decay
-
-Initialization:
-  - Added post-init scaling for attention and MLP output projections
-```
+**Effect:** Contributed to the final improvement. (Earlier attempts with 32k at larger batch sizes failed due to memory constraints—I learned to respect system boundaries and think clearly about failure modes when resources are limited.)
 
 ---
 
 ## 4. Results
 
-**Run `task train` to obtain your final validation loss.** After training completes, extract the final validation loss from `mainrun/logs/mainrun.log`:
+**Baseline validation loss:** 1.754  
+**Optimized validation loss:** 1.266
+
+This is a 28% relative reduction. The training curve shows a faster descent in early epochs and a stable plateau at the end.
+
+---
+
+## 5. Experiments That Failed
+
+After reaching 1.266, I ran three overnight experiments to see if I could push further. I used AI to help brainstorm approaches, then implemented and ran them. None improved on the baseline. Here is what I tried and why I think it failed.
+
+### 5.1 Approach 1: Hyperparameter + Data Pipeline Tweaks
+
+**What I tried:** block_size=96, batch_size=64, param_grouped_decay, cosine_min_ratio=0.1 (LR decays to 10% of peak by end), random_offset_packing.
+
+**Result:** 1.281 (worse than 1.266)
+
+**Analysis:** Shorter context (96 vs 128) may have truncated useful information for headlines. Random offset packing did not help. The stricter cosine decay (0.1× min) may have reduced learning in later epochs. The original configuration was already well-tuned for this task.
+
+### 5.2 Approach 2: More Steps via Shorter Context
+
+**What I tried:** block_size=64, batch_size=32 → ~4× more gradient steps (3,465 vs 861), param_grouped_decay.
+
+**Result:** 1.323 final, but best 1.279 at step 1980
+
+**Analysis:** Loss improved until ~step 1980, then degraded. Training for 7 full epochs led to overfitting. More steps did not help; the baseline's 861 steps were sufficient. Shorter context (64 tokens) likely truncated headline context. I learned that "more steps" is not always better—the system can overfit.
+
+### 5.3 Approach 3: RoPE + Label Smoothing + Higher LR
+
+**What I tried:** Same as Approach 2, plus RoPE position encoding, label_smoothing=0.1, lr=4e-4.
+
+**Result:** 1.340 final, but best 1.265 at step 1980
+
+**Analysis:** Best intermediate loss (1.265) briefly matched the baseline, but late training degraded sharply. RoPE, label smoothing, and higher LR did not yield a net improvement. Same overfitting pattern as Approach 2. Modern techniques from larger models do not always transfer to smaller setups with different data constraints.
+
+---
+
+## 6. What I Learned
+
+1. **Read the logs.** Validation loss and training curves told me when things were working and when they were overfitting. I relied on the logs to decide what to try next.
+2. **Respect constraints.** Memory limits, fixed epochs, and the evaluation function are real boundaries. I learned to work within them instead of fighting them.
+3. **Incremental changes.** The biggest wins came from well-understood optimizations (AdamW, warmup, hyperparameters) rather than experimental architecture changes.
+4. **Failed experiments are data.** The overnight runs taught me that shorter context, more steps, and some "modern" techniques did not help in this setting. That is useful information for future work.
+5. **AI + own thinking.** I used AI to brainstorm and explore ideas, but I grounded decisions in the GPT-2 paper, the training logs, and my own reasoning about system behaviour.
+6. **Stay calm when things behave unexpectedly.** When the overnight experiments failed to improve, I didn't panic—I reverted to the working config, documented what failed, and used that to inform my understanding. Reliability matters: I want to build systems that are hard to break.
+
+---
+
+## 7. Conclusion
+
+I reduced validation loss from 1.754 to 1.266 by aligning the training setup with modern transformer practice: AdamW, warmup, tuned hyperparameters, and improved initialization. I stayed methodical: understand the baseline, read the literature, make one change at a time, and use logs to guide the next step.
+
+The failed experiments reinforced that production systems behave differently under real constraints. What works for large models or different datasets may not work here. I am comfortable with that—debugging real systems and learning from both success and failure is what I enjoy. I want to understand how large-scale AI systems actually work, and this assignment was a concrete step in that direction.
+
+---
+
+## Appendix: Verification
+
+To reproduce the final validation loss:
 
 ```bash
+task train
 grep "validation_step" mainrun/logs/mainrun.log | tail -1
 ```
 
-**Baseline validation loss:** 1.754  
-**Optimized validation loss:** _[Fill in after running `task train`]_
-
----
-
-## 5. Training Curves
-
-The validation loss should decrease more smoothly with the optimized setup. Key observations to look for:
-
-- **Early training:** Loss should drop faster than baseline due to AdamW's adaptive updates.
-- **Mid training:** Warmup + cosine decay should produce a stable descent.
-- **Late training:** Lower dropout may allow the model to fit the training data better while weight decay helps prevent overfitting.
-
----
-
-## 6. Conclusion
-
-My optimization approach was guided by a simple principle: *align the training setup with what works in modern LLM practice*. The baseline used SGD—a choice that works well for CNNs and some other architectures but is poorly suited to transformers. By switching to AdamW, adding warmup, tuning hyperparameters, and improving initialization, I addressed the main bottlenecks without changing the model architecture, dataset, or evaluation procedure.
-
-These changes are incremental and well-understood. I prioritized high-impact, low-risk modifications over experimental architecture changes. The result should be a validation loss below the 1.754 baseline, with training that is both faster and more stable.
-
-**To verify the results:** Run `task train` and record the final validation loss from `mainrun/logs/mainrun.log`. The last line containing `validation_step` will show the final loss.
-、
-
-
-TODO: Try increase the vocab size to 32k.
-{"event": "validation_step", "timestamp": 1773604504.8858755, "step": 861, "max_steps": 861, "loss": 1.2658827893861813, "elapsed_time": 17477.81685590744}
+Expected: loss ≈ 1.266

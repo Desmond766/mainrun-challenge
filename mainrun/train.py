@@ -35,15 +35,6 @@ class Hyperparameters:
     val_frac: float = 0.10
     log_file: str = "./logs/mainrun.log"
 
-# Run configurations for ablation experiments
-RUN_CONFIGS = {
-    1: {"lr": 3e-4, "weight_decay": 0.01, "warmup_frac": 0.0, "dropout": 0.1, "residual_scaling": False, "param_grouped_decay": False},
-    2: {"lr": 3e-4, "weight_decay": 0.01, "warmup_frac": 0.05, "dropout": 0.1, "residual_scaling": False, "param_grouped_decay": False},
-    3: {"lr": 3e-4, "weight_decay": 0.01, "warmup_frac": 0.05, "dropout": 0.1, "residual_scaling": True, "param_grouped_decay": False},
-    4: {"lr": 3e-4, "weight_decay": 0.01, "warmup_frac": 0.05, "dropout": 0.05, "residual_scaling": True, "param_grouped_decay": False},
-    5: {"lr": 3e-4, "weight_decay": 0.01, "warmup_frac": 0.05, "dropout": 0.05, "residual_scaling": True, "param_grouped_decay": True},
-}
-
 def configure_logging(log_file: str):
     Path(log_file).parent.mkdir(parents=True, exist_ok=True)
     
@@ -247,22 +238,11 @@ class GPT(nn.Module):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run", type=int, choices=[1, 2, 3, 4, 5], default=None,
-                        help="Run config 1-5 for ablation. Overrides hyperparameters.")
     parser.add_argument("--log-file", type=str, default=None, help="Log file path")
     cli = parser.parse_args()
 
     args = Hyperparameters()
-    if cli.run is not None:
-        config = RUN_CONFIGS[cli.run]
-        for k, v in config.items():
-            if hasattr(args, k):
-                setattr(args, k, v)
-        if cli.log_file:
-            args.log_file = cli.log_file
-        else:
-            args.log_file = f"./logs/run{cli.run}.log"
-    if cli.log_file and cli.run is None:
+    if cli.log_file is not None:
         args.log_file = cli.log_file
 
     torch.manual_seed(args.seed)
